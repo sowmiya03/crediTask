@@ -62,20 +62,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         console.log('AuthProvider: Getting initial session...');
         
-        // Get initial session with timeout protection - increased timeout to 30 seconds
+        // Get initial session with timeout protection - 35 seconds to allow for network delays
         const sessionPromise = supabase.auth.getSession();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session check timeout')), 30000)
+          setTimeout(() => reject(new Error('Session check timeout after 35 seconds')), 35000)
         );
+        
+        console.log('AuthProvider: Starting session check with 35 second timeout...');
+        const startTime = Date.now();
         
         const { data, error } = await Promise.race([sessionPromise, timeoutPromise]) as any;
         
-        if (!mounted) return;
+        const duration = Date.now() - startTime;
+        console.log(`AuthProvider: Session check completed in ${duration}ms`);
+        
+        if (!mounted) {
+          console.log('AuthProvider: Component unmounted during session check, aborting...');
+          return;
+        }
 
         if (error) {
           console.error('AuthProvider: Session error:', error);
           // Only clear session if this is a real token error
           if (!handleAuthError(error)) {
+            console.log('AuthProvider: Non-token error, setting auth state to null and continuing...');
             setUser(null);
             setSupabaseUser(null);
             setIsLoading(false);
@@ -83,7 +93,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        console.log('AuthProvider: Initial session check', { session: !!data.session });
+        console.log('AuthProvider: Initial session check result:', { 
+          hasSession: !!data.session,
+          hasUser: !!data.session?.user,
+          userId: data.session?.user?.id
+        });
         
         // Handle null session gracefully
         if (data.session) {
@@ -91,15 +105,23 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           console.log('AuthProvider: Found session, fetching profile...');
           await fetchUserProfile(data.session.user.id);
         } else {
-          console.log('AuthProvider: No session found');
+          console.log('AuthProvider: No session found, user is not authenticated');
           setUser(null);
           setSupabaseUser(null);
           setIsLoading(false);
         }
       } catch (error) {
         console.error('AuthProvider: Initialization error:', error);
+        
+        // Check if this is a timeout error
+        if (error instanceof Error && error.message.includes('timeout')) {
+          console.warn('AuthProvider: Session check timed out - this may indicate slow network or Supabase issues');
+          console.warn('AuthProvider: App will continue loading without authentication');
+        }
+        
         if (mounted) {
-          // Don't fail completely on initialization errors
+          // Don't fail completely on initialization errors - allow app to continue
+          console.log('AuthProvider: Continuing app initialization despite auth error...');
           setUser(null);
           setSupabaseUser(null);
           setIsLoading(false);
@@ -115,7 +137,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
       
-      console.log('AuthProvider: Auth state changed', { event, session: !!session });
+      console.log('AuthProvider: Auth state changed', { 
+        event, 
+        hasSession: !!session,
+        userId: session?.user?.id,
+        timestamp: new Date().toISOString()
+      });
       
       try {
         // Handle specific events
@@ -133,13 +160,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           if (session?.user) {
             await fetchUserProfile(session.user.id);
           } else {
+            console.warn('AuthProvider: SIGNED_IN event but no session user found');
             setIsLoading(false);
           }
           return;
         }
         
         if (event === 'TOKEN_REFRESHED') {
-          console.log('AuthProvider: Token refreshed');
+          console.log('AuthProvider: Token refreshed successfully');
           if (!session) {
             console.log('AuthProvider: Token refresh failed, clearing session');
             await clearSession();
@@ -161,6 +189,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error('AuthProvider: Auth state change error:', error);
         if (!handleAuthError(error)) {
+          console.log('AuthProvider: Non-token error in auth state change, continuing...');
           setIsLoading(false);
         }
       }
@@ -234,7 +263,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // User profile exists, set the user data
-        console.log('AuthProvider: Successfully fetched user profile');
+        console.log('AuthProvider: Successfully fetched user profile:', {
+          id: data.id,
+          email: data.email,
+          role: data.role,
+          name: data.name
+        });
         
         setUser({
           id: data.id,
@@ -255,6 +289,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // Handle auth errors
       if (!handleAuthError(error)) {
         // For non-auth errors, still set loading to false
+        console.log('AuthProvider: Profile fetch error, but continuing app load...');
         setIsLoading(false);
       }
     } finally {
@@ -425,9 +460,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   console.log('AuthProvider: Current state', { 
-    user: !!user, 
-    supabaseUser: !!supabaseUser, 
-    isLoading
+    hasUser: !!user, 
+    hasSupabaseUser: !!supabaseUser, 
+    isLoading,
+    userRole: user?.role,
+    timestamp: new Date().toISOString()
   });
 
   return (
