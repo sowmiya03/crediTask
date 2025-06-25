@@ -54,7 +54,7 @@ export const supabase = createClient<Database>(clientUrl, clientKey, {
     fetch: (url, options = {}) => {
       return fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(10000), // 10 second timeout
+        signal: AbortSignal.timeout(15000), // Increased timeout to 15 seconds
       });
     }
   },
@@ -85,7 +85,7 @@ const isConfigurationValid = () => {
 };
 
 // Test connection with better error handling and graceful degradation
-const testConnection = async (timeoutMs: number = 8000) => {
+const testConnection = async (timeoutMs: number = 10000) => {
   const startTime = Date.now();
   connectionAttempts++;
   
@@ -105,7 +105,7 @@ const testConnection = async (timeoutMs: number = 8000) => {
       setTimeout(() => reject(new Error(`Connection timeout after ${timeoutMs / 1000} seconds`)), timeoutMs)
     );
     
-    // Use a simpler query that's less likely to fail
+    // Use a simpler query that's less likely to fail - just check if we can connect
     const connectionPromise = supabase
       .from('users')
       .select('count')
@@ -127,13 +127,7 @@ const testConnection = async (timeoutMs: number = 8000) => {
         duration: `${duration}ms`
       });
       
-      // Provide more specific error guidance
-      if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
-        console.info('💡 Network connectivity issue detected. Please check your Supabase configuration.');
-      } else if (error.message.includes('Invalid API key') || error.code === 'PGRST301') {
-        console.info('💡 Authentication issue detected. Please verify your VITE_SUPABASE_ANON_KEY.');
-      }
-      
+      // Don't fail the app completely on connection errors
       return false;
     }
     
@@ -152,26 +146,18 @@ const testConnection = async (timeoutMs: number = 8000) => {
       attempts: connectionAttempts
     });
     
-    // Provide troubleshooting guidance based on error type
-    if (error instanceof Error && error.message.includes('timeout')) {
-      console.info('💡 Connection timeout detected. This usually means:');
-      console.info('   - Your Supabase project credentials may be incorrect');
-      console.info('   - Your Supabase project may be paused or inactive');
-      console.info('   - Network connectivity issues');
-      console.info('   - Please use the diagnostics tool on the login page for detailed troubleshooting');
-    }
-    
+    // Don't fail the app completely on connection errors
     return false;
   }
 };
 
 // Only test connection if configuration is valid
 if (isConfigurationValid()) {
-  // Test connection immediately with shorter timeout for faster feedback
-  testConnection(5000).catch(() => {
+  // Test connection immediately with longer timeout for better reliability
+  testConnection(8000).catch(() => {
     // Silently handle initial connection test failures to reduce console noise
     if (import.meta.env.MODE === 'development') {
-      console.info('ℹ️ Initial Supabase connection test failed. Use the diagnostics tool for detailed troubleshooting.');
+      console.info('ℹ️ Initial Supabase connection test failed. App will continue to load.');
     }
   });
 } else {
@@ -189,7 +175,7 @@ supabase.auth.onAuthStateChange((event, session) => {
     });
   }
   
-  // Handle token refresh failures
+  // Handle token refresh failures gracefully
   if (event === 'TOKEN_REFRESHED' && !session) {
     console.warn('⚠️ Token refresh failed - user may need to re-authenticate');
     connectionStatus = 'failed';

@@ -62,8 +62,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         console.log('AuthProvider: Getting initial session...');
         
-        // Get initial session without timeout - let it take as long as needed
-        const { data, error } = await supabase.auth.getSession();
+        // Get initial session with timeout protection
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise((_, reject) => 
+          setTimeout(() => reject(new Error('Session check timeout')), 10000)
+        );
+        
+        const { data, error } = await Promise.race([sessionPromise, timeoutPromise]) as any;
         
         if (!mounted) return;
 
@@ -94,12 +99,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (error) {
         console.error('AuthProvider: Initialization error:', error);
         if (mounted) {
-          // Only clear session if this is a real token error
-          if (!handleAuthError(error)) {
-            setUser(null);
-            setSupabaseUser(null);
-            setIsLoading(false);
-          }
+          // Don't fail completely on initialization errors
+          setUser(null);
+          setSupabaseUser(null);
+          setIsLoading(false);
         }
       }
     };
@@ -187,7 +190,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         // Handle auth errors
         if (handleAuthError(error)) return;
         
-        throw error;
+        // For other errors, don't fail completely
+        console.warn('AuthProvider: Profile fetch failed, but continuing...');
+        setIsLoading(false);
+        return;
       }
 
       // If no user profile exists, create one
@@ -213,7 +219,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           // Handle duplicate key error gracefully (code 23505)
           if (insertError && insertError.code !== '23505') {
             console.error('AuthProvider: Error creating user profile:', insertError);
-            throw insertError;
+            // Don't fail completely, just set loading to false
+            setIsLoading(false);
+            return;
           } else if (insertError?.code === '23505') {
             console.log('AuthProvider: User profile already exists (duplicate key), refetching...');
           } else {
@@ -276,16 +284,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
       if (error) {
         console.error('AuthProvider: Login error:', error);
-        
-        // Provide more specific error messages
-        if (error.message.includes('Invalid login credentials')) {
-          console.log('AuthProvider: Invalid credentials');
-        } else if (error.message.includes('Email not confirmed')) {
-          console.log('AuthProvider: Email not confirmed');
-        } else {
-          console.log('AuthProvider: Other login error:', error.message);
-        }
-        
         return false;
       }
       
@@ -431,19 +429,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     supabaseUser: !!supabaseUser, 
     isLoading
   });
-
-  // Show loading state while initializing
-  if (isLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-50">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-indigo-600 mx-auto mb-4"></div>
-          <p className="text-gray-600 text-lg">Loading FreelanceFlow...</p>
-          <p className="text-gray-500 text-sm mt-2">Initializing your workspace</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <AuthContext.Provider value={{ 
