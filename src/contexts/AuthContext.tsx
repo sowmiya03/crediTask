@@ -44,98 +44,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    console.log('AuthProvider: Initializing...');
+    console.log('AuthProvider: Initializing with minimal fallback...');
     
     let mounted = true;
     
+    // Minimal initialization - just set loading to false so app can boot
     const initializeAuth = async () => {
       try {
         // Check if Supabase is properly configured first
         const connectionStatus = getConnectionStatus();
         if (!connectionStatus.isConfigured) {
-          console.warn('AuthProvider: Supabase not configured, skipping auth initialization');
+          console.warn('AuthProvider: Supabase not configured, app will load without auth');
           if (mounted) {
             setIsLoading(false);
           }
           return;
         }
 
-        console.log('AuthProvider: Getting initial session...');
+        console.log('AuthProvider: Supabase configured, setting up auth listener...');
         
-        // Get initial session with timeout protection - 35 seconds to allow for network delays
-        const sessionPromise = supabase.auth.getSession();
-        
-        // Create timeout promise with proper cleanup
-        let timeoutId: NodeJS.Timeout;
-        const timeoutPromise = new Promise((_, reject) => {
-          timeoutId = setTimeout(() => reject(new Error('Session check timeout after 35 seconds')), 35000);
-        });
-        
-        console.log('AuthProvider: Starting session check with 35 second timeout...');
-        const startTime = Date.now();
-        
-        let sessionResult;
-        try {
-          sessionResult = await Promise.race([sessionPromise, timeoutPromise]) as any;
-          // Clear timeout if session promise wins
-          clearTimeout(timeoutId);
-        } catch (error) {
-          // Clear timeout if timeout promise wins or session promise rejects
-          clearTimeout(timeoutId);
-          throw error;
-        }
-        
-        const { data, error } = sessionResult;
-        
-        const duration = Date.now() - startTime;
-        console.log(`AuthProvider: Session check completed in ${duration}ms`);
-        
-        if (!mounted) {
-          console.log('AuthProvider: Component unmounted during session check, aborting...');
-          return;
-        }
-
-        if (error) {
-          console.error('AuthProvider: Session error:', error);
-          // Only clear session if this is a real token error
-          if (!handleAuthError(error)) {
-            console.log('AuthProvider: Non-token error, setting auth state to null and continuing...');
-            setUser(null);
-            setSupabaseUser(null);
-            setIsLoading(false);
-          }
-          return;
-        }
-
-        console.log('AuthProvider: Initial session check result:', { 
-          hasSession: !!data.session,
-          hasUser: !!data.session?.user,
-          userId: data.session?.user?.id
-        });
-        
-        // Handle null session gracefully
-        if (data.session) {
-          setSupabaseUser(data.session.user);
-          console.log('AuthProvider: Found session, fetching profile...');
-          await fetchUserProfile(data.session.user.id);
-        } else {
-          console.log('AuthProvider: No session found, user is not authenticated');
+        // Don't try to get initial session - just set loading to false
+        // The auth state change listener will handle session restoration
+        if (mounted) {
           setUser(null);
           setSupabaseUser(null);
           setIsLoading(false);
         }
       } catch (error) {
         console.error('AuthProvider: Initialization error:', error);
-        
-        // Check if this is a timeout error
-        if (error instanceof Error && error.message.includes('timeout')) {
-          console.warn('AuthProvider: Session check timed out - this may indicate slow network or Supabase issues');
-          console.warn('AuthProvider: App will continue loading without authentication');
-        }
-        
         if (mounted) {
-          // Don't fail completely on initialization errors - allow app to continue
-          console.log('AuthProvider: Continuing app initialization despite auth error...');
+          // Always allow app to continue loading
+          console.log('AuthProvider: App will continue loading despite auth error...');
           setUser(null);
           setSupabaseUser(null);
           setIsLoading(false);
