@@ -57,7 +57,7 @@ export const supabase = createClient<Database>(clientUrl, clientKey, {
       console.log('🌐 Supabase fetch request:', { url: url.toString(), method: options.method || 'GET' });
       return fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(15000), // Reduced from 30s to 15s for faster debugging
+        signal: AbortSignal.timeout(8000), // Reduced timeout to 8 seconds
       });
     }
   },
@@ -97,8 +97,8 @@ const isConfigurationValid = () => {
   return isValid;
 };
 
-// Test connection with enhanced logging and faster timeout
-const testConnection = async (timeoutMs: number = 10000) => {
+// Test connection with enhanced logging and error handling
+const testConnection = async (timeoutMs: number = 8000) => {
   const startTime = Date.now();
   connectionAttempts++;
   
@@ -113,15 +113,18 @@ const testConnection = async (timeoutMs: number = 10000) => {
   }
   
   try {
-    // Create a more specific timeout promise
-    const timeoutPromise = new Promise<never>((_, reject) => 
-      setTimeout(() => {
+    // Create a timeout promise that rejects
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      const timeoutId = setTimeout(() => {
         console.error(`⏰ Connection timeout after ${timeoutMs / 1000} seconds`);
         reject(new Error(`Connection timeout after ${timeoutMs / 1000} seconds`));
-      }, timeoutMs)
-    );
+      }, timeoutMs);
+      
+      // Clear timeout if the promise resolves first
+      return timeoutId;
+    });
     
-    // Use a simpler query that's less likely to fail - just check if we can connect
+    // Use a simpler query that's less likely to fail
     console.log('📡 Attempting database query...');
     const connectionPromise = supabase
       .from('users')
@@ -169,25 +172,28 @@ const testConnection = async (timeoutMs: number = 10000) => {
       message: error instanceof Error ? error.message : 'Unknown error',
       duration: `${duration}ms`,
       attempts: connectionAttempts,
-      stack: error instanceof Error ? error.stack : 'No stack trace'
+      type: error instanceof Error ? error.constructor.name : 'Unknown'
     });
     
     return false;
   }
 };
 
-// Only test connection if configuration is valid
+// Initialize connection status based on configuration
 if (isConfigurationValid()) {
-  console.log('🚀 Starting initial connection test...');
-  // Test connection immediately with faster timeout for debugging
-  testConnection(10000).then((success) => {
-    console.log('🎯 Initial connection test result:', success);
-  }).catch((error) => {
-    console.error('💥 Initial connection test failed:', error);
-    if (import.meta.env.MODE === 'development') {
-      console.info('ℹ️ App will continue to load despite connection failure.');
-    }
-  });
+  console.log('🚀 Configuration is valid - connection testing available');
+  connectionStatus = 'unknown';
+  
+  // Test connection in background without blocking app startup
+  setTimeout(() => {
+    console.log('🔄 Starting background connection test...');
+    testConnection(6000).then((success) => {
+      console.log('🎯 Background connection test result:', success);
+    }).catch((error) => {
+      console.error('💥 Background connection test failed:', error);
+      // Don't throw - just log the error
+    });
+  }, 1000); // Delay initial test by 1 second to allow app to load
 } else {
   console.warn('⚠️ Supabase configuration is invalid or missing. Please check your .env file.');
   connectionStatus = 'misconfigured';
@@ -221,7 +227,7 @@ supabase.auth.onAuthStateChange((event, session) => {
 });
 
 // Export connection test function for manual use
-export const testSupabaseConnection = async (timeoutMs?: number) => {
+export const testSupabaseConnection = async (timeoutMs: number = 6000) => {
   if (!isConfigurationValid()) {
     throw new Error('Supabase configuration is invalid or missing');
   }
