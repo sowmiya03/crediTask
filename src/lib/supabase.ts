@@ -54,7 +54,7 @@ export const supabase = createClient<Database>(clientUrl, clientKey, {
     fetch: (url, options = {}) => {
       return fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(30000), // Increased timeout to 30 seconds to match AuthContext
+        signal: AbortSignal.timeout(30000), // Increased timeout to 30 seconds
       });
     }
   },
@@ -85,7 +85,7 @@ const isConfigurationValid = () => {
 };
 
 // Test connection with better error handling and graceful degradation
-const testConnection = async (timeoutMs: number = 15000) => {
+const testConnection = async (timeoutMs: number = 30000) => {
   const startTime = Date.now();
   connectionAttempts++;
   
@@ -154,7 +154,7 @@ const testConnection = async (timeoutMs: number = 15000) => {
 // Only test connection if configuration is valid
 if (isConfigurationValid()) {
   // Test connection immediately with longer timeout for better reliability
-  testConnection(12000).catch(() => {
+  testConnection(30000).catch(() => {
     // Silently handle initial connection test failures to reduce console noise
     if (import.meta.env.MODE === 'development') {
       console.info('ℹ️ Initial Supabase connection test failed. App will continue to load.');

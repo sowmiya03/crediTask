@@ -44,11 +44,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    console.log('AuthProvider: Initializing with minimal fallback...');
+    console.log('AuthProvider: Initializing with enhanced session handling...');
     
     let mounted = true;
     
-    // Minimal initialization - just set loading to false so app can boot
+    // Enhanced initialization with better error handling
     const initializeAuth = async () => {
       try {
         // Check if Supabase is properly configured first
@@ -61,14 +61,41 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           return;
         }
 
-        console.log('AuthProvider: Supabase configured, setting up auth listener...');
+        console.log('AuthProvider: Supabase configured, checking session...');
         
-        // Don't try to get initial session - just set loading to false
-        // The auth state change listener will handle session restoration
+        // Try to get the current session with timeout
+        const sessionPromise = supabase.auth.getSession();
+        const timeoutPromise = new Promise<never>((_, reject) => 
+          setTimeout(() => reject(new Error('Session check timeout')), 30000)
+        );
+        
+        const { data: { session }, error } = await Promise.race([
+          sessionPromise,
+          timeoutPromise
+        ]);
+
+        if (error) {
+          console.error('AuthProvider: Session check error:', error);
+          if (!handleAuthError(error)) {
+            console.log('AuthProvider: Non-token error, continuing without session...');
+          }
+          if (mounted) {
+            setIsLoading(false);
+          }
+          return;
+        }
+
         if (mounted) {
-          setUser(null);
-          setSupabaseUser(null);
-          setIsLoading(false);
+          setSupabaseUser(session?.user ?? null);
+          
+          if (session?.user) {
+            console.log('AuthProvider: Session found, fetching profile...');
+            await fetchUserProfile(session.user.id);
+          } else {
+            console.log('AuthProvider: No session found');
+            setUser(null);
+            setIsLoading(false);
+          }
         }
       } catch (error) {
         console.error('AuthProvider: Initialization error:', error);
@@ -84,7 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     initializeAuth();
 
-    // Listen for auth changes
+    // Listen for auth changes with enhanced error handling
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange(async (event, session) => {
