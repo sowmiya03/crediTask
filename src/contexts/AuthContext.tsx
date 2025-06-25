@@ -62,10 +62,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         console.log('AuthProvider: Getting initial session...');
         
-        // Get initial session with timeout protection
+        // Get initial session with timeout protection - increased timeout to 30 seconds
         const sessionPromise = supabase.auth.getSession();
         const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session check timeout')), 10000)
+          setTimeout(() => reject(new Error('Session check timeout')), 30000)
         );
         
         const { data, error } = await Promise.race([sessionPromise, timeoutPromise]) as any;
