@@ -64,14 +64,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         
         // Get initial session with timeout protection - 35 seconds to allow for network delays
         const sessionPromise = supabase.auth.getSession();
-        const timeoutPromise = new Promise((_, reject) => 
-          setTimeout(() => reject(new Error('Session check timeout after 35 seconds')), 35000)
-        );
+        
+        // Create timeout promise with proper cleanup
+        let timeoutId: NodeJS.Timeout;
+        const timeoutPromise = new Promise((_, reject) => {
+          timeoutId = setTimeout(() => reject(new Error('Session check timeout after 35 seconds')), 35000);
+        });
         
         console.log('AuthProvider: Starting session check with 35 second timeout...');
         const startTime = Date.now();
         
-        const { data, error } = await Promise.race([sessionPromise, timeoutPromise]) as any;
+        let sessionResult;
+        try {
+          sessionResult = await Promise.race([sessionPromise, timeoutPromise]) as any;
+          // Clear timeout if session promise wins
+          clearTimeout(timeoutId);
+        } catch (error) {
+          // Clear timeout if timeout promise wins or session promise rejects
+          clearTimeout(timeoutId);
+          throw error;
+        }
+        
+        const { data, error } = sessionResult;
         
         const duration = Date.now() - startTime;
         console.log(`AuthProvider: Session check completed in ${duration}ms`);
