@@ -44,7 +44,7 @@ export const supabase = createClient<Database>(clientUrl, clientKey, {
   auth: {
     autoRefreshToken: true,
     persistSession: true,
-    detectSessionInUrl: false,
+    detectSessionInUrl: true,
     flowType: 'pkce',
     debug: import.meta.env.MODE === 'development'
   },
@@ -57,7 +57,7 @@ export const supabase = createClient<Database>(clientUrl, clientKey, {
       console.log('🌐 Supabase fetch request:', { url: url.toString(), method: options.method || 'GET' });
       return fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(8000), // Reduced timeout to 8 seconds
+        signal: AbortSignal.timeout(8000), // 8 second timeout for all requests
       });
     }
   },
@@ -98,7 +98,7 @@ const isConfigurationValid = () => {
 };
 
 // Test connection with enhanced logging and error handling
-const testConnection = async (timeoutMs: number = 8000) => {
+const testConnection = async (timeoutMs: number = 6000) => {
   const startTime = Date.now();
   connectionAttempts++;
   
@@ -225,6 +225,57 @@ supabase.auth.onAuthStateChange((event, session) => {
     console.log('👤 User signed in successfully');
   }
 });
+
+// Session helper with timeout wrapper
+export const getSessionWithTimeout = async (timeoutMs: number = 8000) => {
+  console.log('🔍 Getting session with timeout wrapper...');
+  
+  if (!isConfigurationValid()) {
+    throw new Error('Supabase configuration is invalid or missing');
+  }
+  
+  const timeoutPromise = new Promise<never>((_, reject) => {
+    setTimeout(() => {
+      console.error(`⏰ Session fetch timeout after ${timeoutMs / 1000} seconds`);
+      reject(new Error(`Session fetch timeout after ${timeoutMs / 1000} seconds`));
+    }, timeoutMs);
+  });
+  
+  const sessionPromise = supabase.auth.getSession().then((result) => {
+    console.log('📊 Session fetch result:', {
+      hasSession: !!result.data.session,
+      hasUser: !!result.data.session?.user,
+      error: result.error?.message || null,
+      userId: result.data.session?.user?.id || null
+    });
+    return result;
+  });
+  
+  try {
+    const result = await Promise.race([sessionPromise, timeoutPromise]);
+    return result;
+  } catch (error) {
+    console.error('🚨 Session fetch failed:', error);
+    throw error;
+  }
+};
+
+// Auth state listener helper
+export const createAuthStateListener = (callback: (event: string, session: any) => void) => {
+  console.log('🎧 Setting up auth state listener...');
+  
+  const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+    console.log(`🔄 Auth state change: ${event}`, {
+      hasSession: !!session,
+      userId: session?.user?.id,
+      timestamp: new Date().toISOString()
+    });
+    
+    callback(event, session);
+  });
+  
+  return subscription;
+};
 
 // Export connection test function for manual use
 export const testSupabaseConnection = async (timeoutMs: number = 6000) => {

@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User as SupabaseUser } from '@supabase/supabase-js';
-import { supabase, getConnectionStatus, manualSessionCheck } from '../lib/supabase';
+import { supabase, getConnectionStatus, checkConfiguration, createAuthStateListener, getSessionWithTimeout } from '../lib/supabase';
 import { User } from '../types';
 
 interface AuthContextType {
@@ -19,6 +19,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [supabaseUser, setSupabaseUser] = useState<SupabaseUser | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [authSubscription, setAuthSubscription] = useState<any>(null);
 
   const clearSession = async () => {
     console.log('🧹 AuthProvider: Clearing session...');
@@ -42,202 +43,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     
     return false;
   };
-
-  useEffect(() => {
-    console.log('🚀 AuthProvider: Initializing with enhanced session handling...');
-    
-    let mounted = true;
-    
-    // Enhanced initialization with better error handling and debugging
-    const initializeAuth = async () => {
-      try {
-        // Check if Supabase is properly configured first
-        const connectionStatus = getConnectionStatus();
-        console.log('🔍 AuthProvider: Connection status:', connectionStatus);
-        
-        if (!connectionStatus.isConfigured) {
-          console.warn('⚠️ AuthProvider: Supabase not configured, app will load without auth');
-          if (mounted) {
-            setIsLoading(false);
-          }
-          return;
-        }
-
-        console.log('✅ AuthProvider: Supabase configured, checking session...');
-        
-        // Add manual session check for debugging
-        if (import.meta.env.MODE === 'development') {
-          try {
-            const manualResult = await manualSessionCheck();
-            console.log('🧪 AuthProvider: Manual session check completed:', manualResult);
-          } catch (manualError) {
-            console.warn('🧪 AuthProvider: Manual session check failed:', manualError);
-          }
-        }
-        
-        // Try to get the current session with reduced timeout for faster debugging
-        console.log('📡 AuthProvider: Checking session with Supabase...');
-        const sessionPromise = supabase.auth.getSession().then((result) => {
-          console.log('📊 AuthProvider: Session response:', {
-            hasSession: !!result.data.session,
-            hasUser: !!result.data.session?.user,
-            error: result.error?.message || null,
-            userId: result.data.session?.user?.id || null
-          });
-          return result;
-        });
-        
-        const timeoutPromise = new Promise<never>((_, reject) => 
-          setTimeout(() => {
-            console.error('⏰ AuthProvider: Session check timeout after 10 seconds');
-            reject(new Error('Session check timeout'));
-          }, 10000) // Reduced from 30s to 10s for faster debugging
-        );
-        
-        const { data: { session }, error } = await Promise.race([
-          sessionPromise,
-          timeoutPromise
-        ]);
-
-        if (error) {
-          console.error('🚨 AuthProvider: Session check error:', error);
-          if (!handleAuthError(error)) {
-            console.log('ℹ️ AuthProvider: Non-token error, continuing without session...');
-          }
-          if (mounted) {
-            setIsLoading(false);
-          }
-          return;
-        }
-
-        if (mounted) {
-          setSupabaseUser(session?.user ?? null);
-          
-          if (session?.user) {
-            console.log('👤 AuthProvider: Session found, fetching profile...');
-            await fetchUserProfile(session.user.id);
-          } else {
-            console.log('👻 AuthProvider: No session found');
-            setUser(null);
-            setIsLoading(false);
-          }
-        }
-      } catch (error) {
-        console.error('💥 AuthProvider: Initialization error:', error);
-        
-        // Show user-friendly error message for session timeout
-        if (error instanceof Error && error.message === 'Session check timeout') {
-          console.error('⏰ Session check failed. Please log in again.');
-          if (import.meta.env.MODE === 'development') {
-            alert('Auth session failed. Please log in again.');
-          }
-        }
-        
-        if (mounted) {
-          // Always allow app to continue loading
-          console.log('🔄 AuthProvider: App will continue loading despite auth error...');
-          setUser(null);
-          setSupabaseUser(null);
-          setIsLoading(false);
-        }
-      }
-    };
-
-    initializeAuth();
-
-    // Listen for auth changes with enhanced error handling
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (event, session) => {
-      if (!mounted) return;
-      
-      console.log('🔄 AuthProvider: Auth state changed', { 
-        event, 
-        hasSession: !!session,
-        userId: session?.user?.id,
-        timestamp: new Date().toISOString()
-      });
-      
-      try {
-        // Handle specific events
-        if (event === 'SIGNED_OUT') {
-          console.log('👋 AuthProvider: User signed out');
-          setUser(null);
-          setSupabaseUser(null);
-          setIsLoading(false);
-          return;
-        }
-        
-        if (event === 'SIGNED_IN') {
-          console.log('👤 AuthProvider: User signed in, fetching profile...');
-          setSupabaseUser(session?.user ?? null);
-          if (session?.user) {
-            await fetchUserProfile(session.user.id);
-          } else {
-            console.warn('⚠️ AuthProvider: SIGNED_IN event but no session user found');
-            setIsLoading(false);
-          }
-          return;
-        }
-        
-        if (event === 'TOKEN_REFRESHED') {
-          console.log('🔄 AuthProvider: Token refreshed successfully');
-          if (!session) {
-            console.log('🧹 AuthProvider: Token refresh failed, clearing session');
-            await clearSession();
-            return;
-          }
-        }
-        
-        // Handle other session changes gracefully
-        setSupabaseUser(session?.user ?? null);
-        
-        if (session?.user) {
-          console.log('👤 AuthProvider: Session change - fetching profile...');
-          await fetchUserProfile(session.user.id);
-        } else {
-          console.log('👻 AuthProvider: Session change - clearing user');
-          setUser(null);
-          setIsLoading(false);
-        }
-      } catch (error) {
-        console.error('🚨 AuthProvider: Auth state change error:', error);
-        if (!handleAuthError(error)) {
-          console.log('ℹ️ AuthProvider: Non-token error in auth state change, continuing...');
-          setIsLoading(false);
-        }
-      }
-    });
-
-    return () => {
-      mounted = false;
-      console.log('🧹 AuthProvider: Cleaning up auth subscription');
-      subscription.unsubscribe();
-    };
-  }, []);
-
-  // Add dev-only manual session check
-  useEffect(() => {
-    if (import.meta.env.MODE === 'development') {
-      console.log('🧪 AuthProvider: Setting up dev-only manual session check...');
-      const checkSession = async () => {
-        try {
-          const result = await supabase.auth.getSession();
-          console.log('🧪 AuthProvider: Dev manual session check:', {
-            hasSession: !!result.data.session,
-            error: result.error?.message || null
-          });
-        } catch (error) {
-          console.error('🧪 AuthProvider: Dev manual session check failed:', error);
-        }
-      };
-      
-      // Check session every 30 seconds in development
-      const interval = setInterval(checkSession, 30000);
-      
-      return () => clearInterval(interval);
-    }
-  }, []);
 
   const fetchUserProfile = async (userId: string) => {
     console.log('👤 AuthProvider: Fetching profile for user:', userId);
@@ -334,6 +139,186 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setIsLoading(false);
     }
   };
+
+  useEffect(() => {
+    console.log('🚀 AuthProvider: Initializing with enhanced session handling...');
+    
+    let mounted = true;
+    
+    // Enhanced initialization with auth state listener
+    const initializeAuth = async () => {
+      try {
+        // Check if Supabase is properly configured first
+        const connectionStatus = getConnectionStatus();
+        console.log('🔍 AuthProvider: Connection status:', connectionStatus);
+        
+        if (!connectionStatus.isConfigured) {
+          console.warn('⚠️ AuthProvider: Supabase not configured, app will load without auth');
+          if (mounted) {
+            setIsLoading(false);
+          }
+          return;
+        }
+
+        console.log('✅ AuthProvider: Supabase configured, setting up auth listener...');
+        
+        // Set up auth state listener instead of direct getSession call
+        const subscription = createAuthStateListener(async (event, session) => {
+          if (!mounted) return;
+          
+          console.log('🔄 AuthProvider: Auth state changed', { 
+            event, 
+            hasSession: !!session,
+            userId: session?.user?.id,
+            timestamp: new Date().toISOString()
+          });
+          
+          try {
+            // Handle specific events
+            if (event === 'SIGNED_OUT') {
+              console.log('👋 AuthProvider: User signed out');
+              setUser(null);
+              setSupabaseUser(null);
+              setIsLoading(false);
+              return;
+            }
+            
+            if (event === 'SIGNED_IN' || event === 'INITIAL_SESSION') {
+              console.log('👤 AuthProvider: User signed in or initial session, fetching profile...');
+              setSupabaseUser(session?.user ?? null);
+              if (session?.user) {
+                await fetchUserProfile(session.user.id);
+              } else {
+                console.warn('⚠️ AuthProvider: SIGNED_IN/INITIAL_SESSION event but no session user found');
+                setIsLoading(false);
+              }
+              return;
+            }
+            
+            if (event === 'TOKEN_REFRESHED') {
+              console.log('🔄 AuthProvider: Token refreshed successfully');
+              if (!session) {
+                console.log('🧹 AuthProvider: Token refresh failed, clearing session');
+                await clearSession();
+                return;
+              }
+            }
+            
+            // Handle other session changes gracefully
+            setSupabaseUser(session?.user ?? null);
+            
+            if (session?.user) {
+              console.log('👤 AuthProvider: Session change - fetching profile...');
+              await fetchUserProfile(session.user.id);
+            } else {
+              console.log('👻 AuthProvider: Session change - clearing user');
+              setUser(null);
+              setIsLoading(false);
+            }
+          } catch (error) {
+            console.error('🚨 AuthProvider: Auth state change error:', error);
+            if (!handleAuthError(error)) {
+              console.log('ℹ️ AuthProvider: Non-token error in auth state change, continuing...');
+              setIsLoading(false);
+            }
+          }
+        });
+        
+        setAuthSubscription(subscription);
+        
+        // Try to get initial session with timeout
+        try {
+          console.log('📡 AuthProvider: Checking initial session...');
+          const { data: { session }, error } = await getSessionWithTimeout(8000);
+          
+          if (error) {
+            console.error('🚨 AuthProvider: Initial session check error:', error);
+            if (!handleAuthError(error)) {
+              console.log('ℹ️ AuthProvider: Non-token error, continuing without session...');
+            }
+            if (mounted) {
+              setIsLoading(false);
+            }
+            return;
+          }
+
+          if (mounted) {
+            setSupabaseUser(session?.user ?? null);
+            
+            if (session?.user) {
+              console.log('👤 AuthProvider: Initial session found, fetching profile...');
+              await fetchUserProfile(session.user.id);
+            } else {
+              console.log('👻 AuthProvider: No initial session found');
+              setUser(null);
+              setIsLoading(false);
+            }
+          }
+        } catch (error) {
+          console.error('💥 AuthProvider: Initial session error:', error);
+          
+          // Show user-friendly error message for session timeout
+          if (error instanceof Error && error.message.includes('timeout')) {
+            console.error('⏰ Session check failed. Please log in again.');
+            if (import.meta.env.MODE === 'development') {
+              console.warn('Auth session timeout - this is normal during development');
+            }
+          }
+          
+          if (mounted) {
+            // Always allow app to continue loading
+            console.log('🔄 AuthProvider: App will continue loading despite auth error...');
+            setUser(null);
+            setSupabaseUser(null);
+            setIsLoading(false);
+          }
+        }
+      } catch (error) {
+        console.error('💥 AuthProvider: Initialization error:', error);
+        
+        if (mounted) {
+          // Always allow app to continue loading
+          console.log('🔄 AuthProvider: App will continue loading despite initialization error...');
+          setUser(null);
+          setSupabaseUser(null);
+          setIsLoading(false);
+        }
+      }
+    };
+
+    initializeAuth();
+
+    return () => {
+      mounted = false;
+      console.log('🧹 AuthProvider: Cleaning up auth subscription');
+      if (authSubscription) {
+        authSubscription.unsubscribe();
+      }
+    };
+  }, []);
+
+  // Add dev-only manual session check
+  useEffect(() => {
+    if (import.meta.env.MODE === 'development') {
+      console.log('🧪 AuthProvider: Setting up dev-only manual session check...');
+      const checkSession = async () => {
+        try {
+          const result = await getSessionWithTimeout(5000);
+          console.log('🧪 AuthProvider: Dev manual session check:', {
+            hasSession: !!result.data.session,
+            error: result.error?.message || null
+          });
+        } catch (error) {
+          console.error('🧪 AuthProvider: Dev manual session check failed:', error);
+        }
+      };
+      
+      // Check session every 30 seconds in development
+      const interval = setInterval(checkSession, 30000);
+      
+      return () => clearInterval(interval);
+    }
+  }, []);
 
   const login = async (email: string, password: string): Promise<boolean> => {
     console.log('🔐 AuthProvider: Attempting login for:', email);
