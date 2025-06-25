@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useState, useEffect, ReactNode } from 'react';
 import { User as SupabaseUser } from '@supabase/supabase-js';
-import { supabase, getConnectionStatus } from '../lib/supabase';
+import { supabase, getConnectionStatus, manualSessionCheck } from '../lib/supabase';
 import { User } from '../types';
 
 interface AuthContextType {
@@ -21,21 +21,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   const clearSession = async () => {
-    console.log('AuthProvider: Clearing session...');
+    console.log('🧹 AuthProvider: Clearing session...');
     setUser(null);
     setSupabaseUser(null);
     setIsLoading(false);
   };
 
   const handleAuthError = (error: any) => {
-    console.error('AuthProvider: Auth error:', error);
+    console.error('🚨 AuthProvider: Auth error:', error);
     
     // Check for token-related errors
     if (error?.message?.includes('refresh_token_not_found') || 
         error?.message?.includes('Invalid Refresh Token') ||
         error?.message?.includes('JWT') ||
         error?.code === 'invalid_grant') {
-      console.log('AuthProvider: Token error detected, clearing session...');
+      console.log('🔑 AuthProvider: Token error detected, clearing session...');
       clearSession();
       return true;
     }
@@ -44,29 +44,54 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   useEffect(() => {
-    console.log('AuthProvider: Initializing with enhanced session handling...');
+    console.log('🚀 AuthProvider: Initializing with enhanced session handling...');
     
     let mounted = true;
     
-    // Enhanced initialization with better error handling
+    // Enhanced initialization with better error handling and debugging
     const initializeAuth = async () => {
       try {
         // Check if Supabase is properly configured first
         const connectionStatus = getConnectionStatus();
+        console.log('🔍 AuthProvider: Connection status:', connectionStatus);
+        
         if (!connectionStatus.isConfigured) {
-          console.warn('AuthProvider: Supabase not configured, app will load without auth');
+          console.warn('⚠️ AuthProvider: Supabase not configured, app will load without auth');
           if (mounted) {
             setIsLoading(false);
           }
           return;
         }
 
-        console.log('AuthProvider: Supabase configured, checking session...');
+        console.log('✅ AuthProvider: Supabase configured, checking session...');
         
-        // Try to get the current session with timeout
-        const sessionPromise = supabase.auth.getSession();
+        // Add manual session check for debugging
+        if (import.meta.env.MODE === 'development') {
+          try {
+            const manualResult = await manualSessionCheck();
+            console.log('🧪 AuthProvider: Manual session check completed:', manualResult);
+          } catch (manualError) {
+            console.warn('🧪 AuthProvider: Manual session check failed:', manualError);
+          }
+        }
+        
+        // Try to get the current session with reduced timeout for faster debugging
+        console.log('📡 AuthProvider: Checking session with Supabase...');
+        const sessionPromise = supabase.auth.getSession().then((result) => {
+          console.log('📊 AuthProvider: Session response:', {
+            hasSession: !!result.data.session,
+            hasUser: !!result.data.session?.user,
+            error: result.error?.message || null,
+            userId: result.data.session?.user?.id || null
+          });
+          return result;
+        });
+        
         const timeoutPromise = new Promise<never>((_, reject) => 
-          setTimeout(() => reject(new Error('Session check timeout')), 30000)
+          setTimeout(() => {
+            console.error('⏰ AuthProvider: Session check timeout after 10 seconds');
+            reject(new Error('Session check timeout'));
+          }, 10000) // Reduced from 30s to 10s for faster debugging
         );
         
         const { data: { session }, error } = await Promise.race([
@@ -75,9 +100,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         ]);
 
         if (error) {
-          console.error('AuthProvider: Session check error:', error);
+          console.error('🚨 AuthProvider: Session check error:', error);
           if (!handleAuthError(error)) {
-            console.log('AuthProvider: Non-token error, continuing without session...');
+            console.log('ℹ️ AuthProvider: Non-token error, continuing without session...');
           }
           if (mounted) {
             setIsLoading(false);
@@ -89,19 +114,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setSupabaseUser(session?.user ?? null);
           
           if (session?.user) {
-            console.log('AuthProvider: Session found, fetching profile...');
+            console.log('👤 AuthProvider: Session found, fetching profile...');
             await fetchUserProfile(session.user.id);
           } else {
-            console.log('AuthProvider: No session found');
+            console.log('👻 AuthProvider: No session found');
             setUser(null);
             setIsLoading(false);
           }
         }
       } catch (error) {
-        console.error('AuthProvider: Initialization error:', error);
+        console.error('💥 AuthProvider: Initialization error:', error);
+        
+        // Show user-friendly error message for session timeout
+        if (error instanceof Error && error.message === 'Session check timeout') {
+          console.error('⏰ Session check failed. Please log in again.');
+          if (import.meta.env.MODE === 'development') {
+            alert('Auth session failed. Please log in again.');
+          }
+        }
+        
         if (mounted) {
           // Always allow app to continue loading
-          console.log('AuthProvider: App will continue loading despite auth error...');
+          console.log('🔄 AuthProvider: App will continue loading despite auth error...');
           setUser(null);
           setSupabaseUser(null);
           setIsLoading(false);
@@ -117,7 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } = supabase.auth.onAuthStateChange(async (event, session) => {
       if (!mounted) return;
       
-      console.log('AuthProvider: Auth state changed', { 
+      console.log('🔄 AuthProvider: Auth state changed', { 
         event, 
         hasSession: !!session,
         userId: session?.user?.id,
@@ -127,7 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         // Handle specific events
         if (event === 'SIGNED_OUT') {
-          console.log('AuthProvider: User signed out');
+          console.log('👋 AuthProvider: User signed out');
           setUser(null);
           setSupabaseUser(null);
           setIsLoading(false);
@@ -135,21 +169,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
         
         if (event === 'SIGNED_IN') {
-          console.log('AuthProvider: User signed in, fetching profile...');
+          console.log('👤 AuthProvider: User signed in, fetching profile...');
           setSupabaseUser(session?.user ?? null);
           if (session?.user) {
             await fetchUserProfile(session.user.id);
           } else {
-            console.warn('AuthProvider: SIGNED_IN event but no session user found');
+            console.warn('⚠️ AuthProvider: SIGNED_IN event but no session user found');
             setIsLoading(false);
           }
           return;
         }
         
         if (event === 'TOKEN_REFRESHED') {
-          console.log('AuthProvider: Token refreshed successfully');
+          console.log('🔄 AuthProvider: Token refreshed successfully');
           if (!session) {
-            console.log('AuthProvider: Token refresh failed, clearing session');
+            console.log('🧹 AuthProvider: Token refresh failed, clearing session');
             await clearSession();
             return;
           }
@@ -159,17 +193,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setSupabaseUser(session?.user ?? null);
         
         if (session?.user) {
-          console.log('AuthProvider: Session change - fetching profile...');
+          console.log('👤 AuthProvider: Session change - fetching profile...');
           await fetchUserProfile(session.user.id);
         } else {
-          console.log('AuthProvider: Session change - clearing user');
+          console.log('👻 AuthProvider: Session change - clearing user');
           setUser(null);
           setIsLoading(false);
         }
       } catch (error) {
-        console.error('AuthProvider: Auth state change error:', error);
+        console.error('🚨 AuthProvider: Auth state change error:', error);
         if (!handleAuthError(error)) {
-          console.log('AuthProvider: Non-token error in auth state change, continuing...');
+          console.log('ℹ️ AuthProvider: Non-token error in auth state change, continuing...');
           setIsLoading(false);
         }
       }
@@ -177,13 +211,36 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
     return () => {
       mounted = false;
-      console.log('AuthProvider: Cleaning up auth subscription');
+      console.log('🧹 AuthProvider: Cleaning up auth subscription');
       subscription.unsubscribe();
     };
   }, []);
 
+  // Add dev-only manual session check
+  useEffect(() => {
+    if (import.meta.env.MODE === 'development') {
+      console.log('🧪 AuthProvider: Setting up dev-only manual session check...');
+      const checkSession = async () => {
+        try {
+          const result = await supabase.auth.getSession();
+          console.log('🧪 AuthProvider: Dev manual session check:', {
+            hasSession: !!result.data.session,
+            error: result.error?.message || null
+          });
+        } catch (error) {
+          console.error('🧪 AuthProvider: Dev manual session check failed:', error);
+        }
+      };
+      
+      // Check session every 30 seconds in development
+      const interval = setInterval(checkSession, 30000);
+      
+      return () => clearInterval(interval);
+    }
+  }, []);
+
   const fetchUserProfile = async (userId: string) => {
-    console.log('AuthProvider: Fetching profile for user:', userId);
+    console.log('👤 AuthProvider: Fetching profile for user:', userId);
     
     try {
       // Use maybeSingle() instead of single() to handle cases where no user exists
@@ -194,20 +251,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .maybeSingle();
 
       if (error) {
-        console.error('AuthProvider: Error fetching user profile:', error);
+        console.error('🚨 AuthProvider: Error fetching user profile:', error);
         
         // Handle auth errors
         if (handleAuthError(error)) return;
         
         // For other errors, don't fail completely
-        console.warn('AuthProvider: Profile fetch failed, but continuing...');
+        console.warn('⚠️ AuthProvider: Profile fetch failed, but continuing...');
         setIsLoading(false);
         return;
       }
 
       // If no user profile exists, create one
       if (!data) {
-        console.log('AuthProvider: User not found in users table, creating profile...');
+        console.log('👤 AuthProvider: User not found in users table, creating profile...');
         
         const { data: authUser } = await supabase.auth.getUser();
         if (authUser.user) {
@@ -227,14 +284,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           
           // Handle duplicate key error gracefully (code 23505)
           if (insertError && insertError.code !== '23505') {
-            console.error('AuthProvider: Error creating user profile:', insertError);
+            console.error('🚨 AuthProvider: Error creating user profile:', insertError);
             // Don't fail completely, just set loading to false
             setIsLoading(false);
             return;
           } else if (insertError?.code === '23505') {
-            console.log('AuthProvider: User profile already exists (duplicate key), refetching...');
+            console.log('👤 AuthProvider: User profile already exists (duplicate key), refetching...');
           } else {
-            console.log('AuthProvider: Created new user profile successfully');
+            console.log('✅ AuthProvider: Created new user profile successfully');
           }
           
           // Retry fetching the profile after creation or if duplicate key error
@@ -243,7 +300,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         }
       } else {
         // User profile exists, set the user data
-        console.log('AuthProvider: Successfully fetched user profile:', {
+        console.log('✅ AuthProvider: Successfully fetched user profile:', {
           id: data.id,
           email: data.email,
           role: data.role,
@@ -264,28 +321,28 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         });
       }
     } catch (error) {
-      console.error('AuthProvider: Error in fetchUserProfile:', error);
+      console.error('🚨 AuthProvider: Error in fetchUserProfile:', error);
       
       // Handle auth errors
       if (!handleAuthError(error)) {
         // For non-auth errors, still set loading to false
-        console.log('AuthProvider: Profile fetch error, but continuing app load...');
+        console.log('ℹ️ AuthProvider: Profile fetch error, but continuing app load...');
         setIsLoading(false);
       }
     } finally {
-      console.log('AuthProvider: Setting loading to false after profile fetch');
+      console.log('✅ AuthProvider: Setting loading to false after profile fetch');
       setIsLoading(false);
     }
   };
 
   const login = async (email: string, password: string): Promise<boolean> => {
-    console.log('AuthProvider: Attempting login for:', email);
+    console.log('🔐 AuthProvider: Attempting login for:', email);
     
     try {
       // Check if Supabase is configured
       const connectionStatus = getConnectionStatus();
       if (!connectionStatus.isConfigured) {
-        console.error('AuthProvider: Supabase not configured');
+        console.error('🚨 AuthProvider: Supabase not configured');
         return false;
       }
 
@@ -298,32 +355,32 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (error) {
-        console.error('AuthProvider: Login error:', error);
+        console.error('🚨 AuthProvider: Login error:', error);
         return false;
       }
       
       if (data.user && data.session) {
-        console.log('AuthProvider: Login successful');
+        console.log('✅ AuthProvider: Login successful');
         // Don't set loading here, let the auth state change handle it
         return true;
       }
       
-      console.log('AuthProvider: Login failed - no user or session returned');
+      console.log('❌ AuthProvider: Login failed - no user or session returned');
       return false;
     } catch (error) {
-      console.error('AuthProvider: Login failed:', error);
+      console.error('🚨 AuthProvider: Login failed:', error);
       return false;
     }
   };
 
   const signup = async (name: string, email: string, password: string, role: 'client' | 'worker'): Promise<boolean> => {
-    console.log('AuthProvider: Attempting signup for:', email, 'as', role);
+    console.log('📝 AuthProvider: Attempting signup for:', email, 'as', role);
     
     try {
       // Check if Supabase is configured
       const connectionStatus = getConnectionStatus();
       if (!connectionStatus.isConfigured) {
-        console.error('AuthProvider: Supabase not configured');
+        console.error('🚨 AuthProvider: Supabase not configured');
         return false;
       }
 
@@ -339,12 +396,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
 
       if (authError) {
-        console.error('AuthProvider: Signup auth error:', authError);
+        console.error('🚨 AuthProvider: Signup auth error:', authError);
         return false;
       }
 
       if (authData.user) {
-        console.log('AuthProvider: Auth signup successful, creating profile...');
+        console.log('✅ AuthProvider: Auth signup successful, creating profile...');
         
         // Create user profile
         const { error: profileError } = await supabase
@@ -363,42 +420,42 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
         // Handle duplicate key error gracefully (code 23505)
         if (profileError && profileError.code !== '23505') {
-          console.error('AuthProvider: Profile creation error:', profileError);
+          console.error('🚨 AuthProvider: Profile creation error:', profileError);
           return false;
         } else if (profileError?.code === '23505') {
-          console.log('AuthProvider: User profile already exists during signup (duplicate key)');
+          console.log('👤 AuthProvider: User profile already exists during signup (duplicate key)');
         } else {
-          console.log('AuthProvider: Profile created successfully during signup');
+          console.log('✅ AuthProvider: Profile created successfully during signup');
         }
         
-        console.log('AuthProvider: Signup completed successfully');
+        console.log('✅ AuthProvider: Signup completed successfully');
         return true;
       }
       
-      console.log('AuthProvider: Signup failed - no user returned');
+      console.log('❌ AuthProvider: Signup failed - no user returned');
       return false;
     } catch (error) {
-      console.error('AuthProvider: Signup error:', error);
+      console.error('🚨 AuthProvider: Signup error:', error);
       return false;
     }
   };
 
   const logout = async (): Promise<void> => {
-    console.log('AuthProvider: Logging out...');
+    console.log('👋 AuthProvider: Logging out...');
     
     try {
       // Sign out from Supabase
       const { error } = await supabase.auth.signOut();
       
       if (error) {
-        console.error('AuthProvider: Logout error:', error);
+        console.error('🚨 AuthProvider: Logout error:', error);
       }
       
       // Clear local state
       await clearSession();
-      console.log('AuthProvider: Logout completed');
+      console.log('✅ AuthProvider: Logout completed');
     } catch (error) {
-      console.error('AuthProvider: Logout error:', error);
+      console.error('🚨 AuthProvider: Logout error:', error);
       // Even if logout fails, clear local state
       await clearSession();
     }
@@ -406,11 +463,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const updateProfile = async (updates: Partial<User>): Promise<boolean> => {
     if (!user) {
-      console.log('AuthProvider: Cannot update profile - no user');
+      console.log('❌ AuthProvider: Cannot update profile - no user');
       return false;
     }
 
-    console.log('AuthProvider: Updating profile:', updates);
+    console.log('📝 AuthProvider: Updating profile:', updates);
 
     try {
       const updateData: any = {};
@@ -426,20 +483,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         .eq('id', user.id);
 
       if (error) {
-        console.error('AuthProvider: Profile update error:', error);
+        console.error('🚨 AuthProvider: Profile update error:', error);
         return false;
       }
 
       setUser({ ...user, ...updates });
-      console.log('AuthProvider: Profile updated successfully');
+      console.log('✅ AuthProvider: Profile updated successfully');
       return true;
     } catch (error) {
-      console.error('AuthProvider: Profile update failed:', error);
+      console.error('🚨 AuthProvider: Profile update failed:', error);
       return false;
     }
   };
 
-  console.log('AuthProvider: Current state', { 
+  console.log('📊 AuthProvider: Current state', { 
     hasUser: !!user, 
     hasSupabaseUser: !!supabaseUser, 
     isLoading,

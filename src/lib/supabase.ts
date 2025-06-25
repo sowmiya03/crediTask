@@ -4,12 +4,14 @@ import type { Database } from '../types/database';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
 const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY;
 
-console.log('Supabase Configuration Check:', {
+console.log('🔧 Supabase Configuration Check:', {
   url: supabaseUrl ? 'Present' : 'Missing',
   urlValid: supabaseUrl?.startsWith('https://') && supabaseUrl?.includes('.supabase.co'),
   key: supabaseAnonKey ? 'Present' : 'Missing',
   keyValid: supabaseAnonKey?.length > 50 && supabaseAnonKey?.startsWith('eyJ'),
-  environment: import.meta.env.MODE
+  environment: import.meta.env.MODE,
+  urlLength: supabaseUrl?.length || 0,
+  keyLength: supabaseAnonKey?.length || 0
 });
 
 // Enhanced validation with better error messages
@@ -52,9 +54,10 @@ export const supabase = createClient<Database>(clientUrl, clientKey, {
       'X-Client-Version': '1.0.0'
     },
     fetch: (url, options = {}) => {
+      console.log('🌐 Supabase fetch request:', { url: url.toString(), method: options.method || 'GET' });
       return fetch(url, {
         ...options,
-        signal: AbortSignal.timeout(30000), // Increased timeout to 30 seconds
+        signal: AbortSignal.timeout(15000), // Reduced from 30s to 15s for faster debugging
       });
     }
   },
@@ -76,18 +79,30 @@ let lastError: string | null = null;
 
 // Check if configuration is valid
 const isConfigurationValid = () => {
-  return supabaseUrl && 
+  const isValid = supabaseUrl && 
          supabaseAnonKey && 
          supabaseUrl.startsWith('https://') && 
          supabaseUrl.includes('.supabase.co') &&
          supabaseAnonKey.length > 50 && 
          supabaseAnonKey.startsWith('eyJ');
+  
+  console.log('🔍 Configuration validation:', {
+    hasUrl: !!supabaseUrl,
+    hasKey: !!supabaseAnonKey,
+    urlValid: supabaseUrl?.startsWith('https://') && supabaseUrl?.includes('.supabase.co'),
+    keyValid: supabaseAnonKey?.length > 50 && supabaseAnonKey?.startsWith('eyJ'),
+    isValid
+  });
+  
+  return isValid;
 };
 
-// Test connection with better error handling and graceful degradation
-const testConnection = async (timeoutMs: number = 30000) => {
+// Test connection with enhanced logging and faster timeout
+const testConnection = async (timeoutMs: number = 10000) => {
   const startTime = Date.now();
   connectionAttempts++;
+  
+  console.log(`🔄 Testing Supabase connection (attempt ${connectionAttempts}) with ${timeoutMs}ms timeout...`);
   
   // Check configuration first
   if (!isConfigurationValid()) {
@@ -98,19 +113,29 @@ const testConnection = async (timeoutMs: number = 30000) => {
   }
   
   try {
-    console.log(`🔄 Testing Supabase connection (attempt ${connectionAttempts})...`);
-    
     // Create a more specific timeout promise
     const timeoutPromise = new Promise<never>((_, reject) => 
-      setTimeout(() => reject(new Error(`Connection timeout after ${timeoutMs / 1000} seconds`)), timeoutMs)
+      setTimeout(() => {
+        console.error(`⏰ Connection timeout after ${timeoutMs / 1000} seconds`);
+        reject(new Error(`Connection timeout after ${timeoutMs / 1000} seconds`));
+      }, timeoutMs)
     );
     
     // Use a simpler query that's less likely to fail - just check if we can connect
+    console.log('📡 Attempting database query...');
     const connectionPromise = supabase
       .from('users')
       .select('count')
       .limit(1)
-      .maybeSingle();
+      .maybeSingle()
+      .then((result) => {
+        console.log('📊 Database query result:', { 
+          error: result.error?.message || null, 
+          hasData: !!result.data,
+          status: result.status 
+        });
+        return result;
+      });
     
     const { error } = await Promise.race([connectionPromise, timeoutPromise]);
     
@@ -124,10 +149,10 @@ const testConnection = async (timeoutMs: number = 30000) => {
       console.warn('⚠️ Supabase connection failed:', {
         message: error.message,
         code: error.code,
-        duration: `${duration}ms`
+        duration: `${duration}ms`,
+        hint: error.hint || 'No hint available'
       });
       
-      // Don't fail the app completely on connection errors
       return false;
     }
     
@@ -143,21 +168,24 @@ const testConnection = async (timeoutMs: number = 30000) => {
     console.warn('⚠️ Supabase connection error:', {
       message: error instanceof Error ? error.message : 'Unknown error',
       duration: `${duration}ms`,
-      attempts: connectionAttempts
+      attempts: connectionAttempts,
+      stack: error instanceof Error ? error.stack : 'No stack trace'
     });
     
-    // Don't fail the app completely on connection errors
     return false;
   }
 };
 
 // Only test connection if configuration is valid
 if (isConfigurationValid()) {
-  // Test connection immediately with longer timeout for better reliability
-  testConnection(30000).catch(() => {
-    // Silently handle initial connection test failures to reduce console noise
+  console.log('🚀 Starting initial connection test...');
+  // Test connection immediately with faster timeout for debugging
+  testConnection(10000).then((success) => {
+    console.log('🎯 Initial connection test result:', success);
+  }).catch((error) => {
+    console.error('💥 Initial connection test failed:', error);
     if (import.meta.env.MODE === 'development') {
-      console.info('ℹ️ Initial Supabase connection test failed. App will continue to load.');
+      console.info('ℹ️ App will continue to load despite connection failure.');
     }
   });
 } else {
@@ -165,21 +193,30 @@ if (isConfigurationValid()) {
   connectionStatus = 'misconfigured';
 }
 
-// Add error handling for auth state changes with better logging
+// Add enhanced error handling for auth state changes
 supabase.auth.onAuthStateChange((event, session) => {
-  // Only log important events in development to reduce noise
-  if (import.meta.env.MODE === 'development' && ['SIGNED_IN', 'SIGNED_OUT', 'TOKEN_REFRESHED'].includes(event)) {
-    console.log(`🔐 Auth event: ${event}`, {
-      hasSession: !!session,
-      userId: session?.user?.id
-    });
-  }
+  console.log(`🔐 Auth event: ${event}`, {
+    hasSession: !!session,
+    userId: session?.user?.id,
+    timestamp: new Date().toISOString(),
+    sessionExpiry: session?.expires_at ? new Date(session.expires_at * 1000).toISOString() : null
+  });
   
   // Handle token refresh failures gracefully
   if (event === 'TOKEN_REFRESHED' && !session) {
     console.warn('⚠️ Token refresh failed - user may need to re-authenticate');
     connectionStatus = 'failed';
     lastError = 'Token refresh failed';
+  }
+  
+  // Log sign out events
+  if (event === 'SIGNED_OUT') {
+    console.log('👋 User signed out');
+  }
+  
+  // Log sign in events
+  if (event === 'SIGNED_IN') {
+    console.log('👤 User signed in successfully');
   }
 });
 
@@ -207,6 +244,7 @@ export const resetConnectionState = () => {
   connectionStatus = 'unknown';
   lastConnectionCheck = 0;
   lastError = null;
+  console.log('🔄 Connection state reset');
 };
 
 // Export configuration check
@@ -217,3 +255,26 @@ export const checkConfiguration = () => ({
   keyValid: supabaseAnonKey?.length > 50 && supabaseAnonKey?.startsWith('eyJ'),
   isValid: isConfigurationValid()
 });
+
+// Manual session check function for debugging
+export const manualSessionCheck = async () => {
+  console.log('🧪 Manual session check initiated...');
+  try {
+    const startTime = Date.now();
+    const { data, error } = await supabase.auth.getSession();
+    const duration = Date.now() - startTime;
+    
+    console.log('🧪 Manual session check result:', {
+      hasSession: !!data.session,
+      hasUser: !!data.session?.user,
+      error: error?.message || null,
+      duration: `${duration}ms`,
+      userId: data.session?.user?.id || null
+    });
+    
+    return { data, error, duration };
+  } catch (error) {
+    console.error('🧪 Manual session check failed:', error);
+    throw error;
+  }
+};
